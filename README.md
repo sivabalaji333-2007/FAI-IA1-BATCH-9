@@ -130,4 +130,8 @@ the remaining branches can be ignored.
 
 This reduces the number of game states that need to be evaluated and makes the AI faster.
 
+## 10.Conclusion
+
+The Checkers Mini AI demonstrates how Artificial Intelligence can be applied to a two-player competitive game. The system uses legal move generation, mandatory captures, Minimax adversarial search, an evaluation function, and Alpha-Beta pruning to select moves. The project provides a practical demonstration of how an AI agent can analyze possible game states and make decisions against an opponent.
+
 
