@@ -1,0 +1,641 @@
+import math
+
+EMPTY = 0
+HUMAN = 1
+AI = 2
+HUMAN_KING = 3
+AI_KING = 4
+
+BOARD_SIZE = 8
+SEARCH_DEPTH = 4
+
+
+# ============================================================
+# 1. BOARD
+# ============================================================
+
+def create_board():
+    board = [[EMPTY for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
+
+    # AI pieces at the top
+    for r in range(3):
+        for c in range(BOARD_SIZE):
+            if (r + c) % 2 == 1:
+                board[r][c] = AI
+
+    # Human pieces at the bottom
+    for r in range(5, 8):
+        for c in range(BOARD_SIZE):
+            if (r + c) % 2 == 1:
+                board[r][c] = HUMAN
+
+    return board
+
+
+# ============================================================
+# 2. DISPLAY BOARD
+# ============================================================
+
+def display_board(board):
+    symbols = {
+        EMPTY: ".",
+        HUMAN: "R",
+        AI: "B",
+        HUMAN_KING: "K",
+        AI_KING: "Q"
+    }
+
+    print("\n     0 1 2 3 4 5 6 7")
+    print("   +-----------------+")
+
+    for r in range(BOARD_SIZE):
+        print(f" {r} |", end=" ")
+        for c in range(BOARD_SIZE):
+            print(symbols[board[r][c]], end=" ")
+        print("|")
+
+    print("   +-----------------+")
+    print("   R=Human  B=AI  K=Human King  Q=AI King")
+
+
+# ============================================================
+# 3. PIECE CHECKS
+# ============================================================
+
+def is_human(piece):
+    return piece in (HUMAN, HUMAN_KING)
+
+
+def is_ai(piece):
+    return piece in (AI, AI_KING)
+
+
+def is_king(piece):
+    return piece in (HUMAN_KING, AI_KING)
+
+
+def player_name(player):
+    return "HUMAN" if player == HUMAN else "AI"
+
+
+def opponent(player):
+    return AI if player == HUMAN else HUMAN
+
+
+# ============================================================
+# 4. MOVEMENT DIRECTIONS
+# ============================================================
+
+def get_directions(piece, player):
+    # Kings can move/capture in all diagonal directions.
+    if is_king(piece):
+        return [
+            (-1, -1), (-1, 1),
+            (1, -1), (1, 1)
+        ]
+
+    # AI moves downward.
+    if player == AI:
+        return [(1, -1), (1, 1)]
+
+    # Human moves upward.
+    return [(-1, -1), (-1, 1)]
+
+
+# ============================================================
+# 5. SINGLE-STEP MOVE GENERATION
+# ============================================================
+
+def get_capture_moves(board, player):
+    captures = []
+
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            piece = board[r][c]
+
+            if player == HUMAN and not is_human(piece):
+                continue
+
+            if player == AI and not is_ai(piece):
+                continue
+
+            for dr, dc in get_directions(piece, player):
+                mr, mc = r + dr, c + dc
+                tr, tc = r + 2 * dr, c + 2 * dc
+
+                if not (0 <= mr < 8 and 0 <= mc < 8):
+                    continue
+
+                if not (0 <= tr < 8 and 0 <= tc < 8):
+                    continue
+
+                middle = board[mr][mc]
+
+                enemy = (
+                    (player == HUMAN and is_ai(middle)) or
+                    (player == AI and is_human(middle))
+                )
+
+                if enemy and board[tr][tc] == EMPTY:
+                    captures.append(((r, c), (tr, tc)))
+
+    return captures
+
+
+def get_normal_moves(board, player):
+    moves = []
+
+    for r in range(BOARD_SIZE):
+        for c in range(BOARD_SIZE):
+            piece = board[r][c]
+
+            if player == HUMAN and not is_human(piece):
+                continue
+
+            if player == AI and not is_ai(piece):
+                continue
+
+            for dr, dc in get_directions(piece, player):
+                nr, nc = r + dr, c + dc
+
+                if (
+                    0 <= nr < 8 and
+                    0 <= nc < 8
+                    and board[nr][nc] == EMPTY
+                ):
+                    moves.append(((r, c), (nr, nc)))
+
+    return moves
+
+
+def get_moves(board, player):
+    """
+    Mandatory capture rule:
+    if at least one capture exists, only captures are returned.
+    """
+    captures = get_capture_moves(board, player)
+
+    if captures:
+        return captures
+
+    return get_normal_moves(board, player)
+
+
+# ============================================================
+# 6. APPLY ONE MOVE
+# ============================================================
+
+def apply_move(board, move):
+    new_board = [row[:] for row in board]
+
+    (r1, c1), (r2, c2) = move
+    piece = new_board[r1][c1]
+
+    new_board[r1][c1] = EMPTY
+    new_board[r2][c2] = piece
+
+    # Capture
+    if abs(r2 - r1) == 2 and abs(c2 - c1) == 2:
+        middle_r = (r1 + r2) // 2
+        middle_c = (c1 + c2) // 2
+        new_board[middle_r][middle_c] = EMPTY
+
+    # Promotion
+    if piece == HUMAN and r2 == 0:
+        new_board[r2][c2] = HUMAN_KING
+
+    elif piece == AI and r2 == 7:
+        new_board[r2][c2] = AI_KING
+
+    return new_board
+
+
+# ============================================================
+# 7. COMPLETE TURN GENERATION
+# ============================================================
+
+def capture_sequences(board, player, start_pos=None):
+    """
+    Generate complete multiple-capture sequences.
+    Returns (final_board, move_sequence).
+    """
+
+    if start_pos is None:
+        starts = []
+
+        for r in range(8):
+            for c in range(8):
+                piece = board[r][c]
+                if (
+                    (player == HUMAN and is_human(piece)) or
+                    (player == AI and is_ai(piece))
+                ):
+                    starts.append((r, c))
+    else:
+        starts = [start_pos]
+
+    results = []
+
+    for start in starts:
+        r, c = start
+        piece = board[r][c]
+
+        if (
+            (player == HUMAN and not is_human(piece)) or
+            (player == AI and not is_ai(piece))
+        ):
+            continue
+
+        local_captures = []
+
+        for dr, dc in get_directions(piece, player):
+            mr, mc = r + dr, c + dc
+            tr, tc = r + 2 * dr, c + 2 * dc
+
+            if not (
+                0 <= mr < 8 and 0 <= mc < 8
+                and 0 <= tr < 8 and 0 <= tc < 8
+            ):
+                continue
+
+            middle = board[mr][mc]
+
+            enemy = (
+                (player == HUMAN and is_ai(middle)) or
+                (player == AI and is_human(middle))
+            )
+
+            if enemy and board[tr][tc] == EMPTY:
+                local_captures.append(((r, c), (tr, tc)))
+
+        if not local_captures:
+            continue
+
+        for move in local_captures:
+            next_board = apply_move(board, move)
+            destination = move[1]
+
+            more = capture_sequences(
+                next_board,
+                player,
+                destination
+            )
+
+            if more:
+                for final_board, sequence in more:
+                    results.append(
+                        (final_board, [move] + sequence)
+                    )
+            else:
+                results.append(
+                    (next_board, [move])
+                )
+
+    return results
+
+
+def get_turn_states(board, player):
+    """
+    Return all legal complete-turn states.
+    A mandatory capture is treated as one complete turn,
+    including multiple jumps.
+    """
+    captures = capture_sequences(board, player)
+
+    if captures:
+        return captures
+
+    return [
+        (apply_move(board, move), [move])
+        for move in get_normal_moves(board, player)
+    ]
+
+
+# ============================================================
+# 8. EVALUATION FUNCTION
+# ============================================================
+
+def evaluate(board):
+    """
+    Positive = AI advantage
+    Negative = Human advantage
+    """
+
+    score = 0
+
+    for r in range(8):
+        for c in range(8):
+            piece = board[r][c]
+
+            if piece == AI:
+                score += 10
+
+                # Reward advancing AI pieces.
+                score += r
+
+            elif piece == AI_KING:
+                score += 20
+
+            elif piece == HUMAN:
+                score -= 10
+
+                # Reward human advancement from AI's perspective negatively.
+                score -= (7 - r)
+
+            elif piece == HUMAN_KING:
+                score -= 20
+
+    return score
+
+
+# ============================================================
+# 9. GAME OVER
+# ============================================================
+
+def winner(board):
+    ai_moves = get_turn_states(board, AI)
+    human_moves = get_turn_states(board, HUMAN)
+
+    ai_pieces = any(is_ai(piece) for row in board for piece in row)
+    human_pieces = any(is_human(piece) for row in board for piece in row)
+
+    if not ai_pieces:
+        return HUMAN
+
+    if not human_pieces:
+        return AI
+
+    if not ai_moves:
+        return HUMAN
+
+    if not human_moves:
+        return AI
+
+    return None
+
+
+# ============================================================
+# 10. MINIMAX + ALPHA-BETA PRUNING
+# ============================================================
+
+def minimax(board, depth, alpha, beta, maximizing):
+    result = winner(board)
+
+    if result == AI:
+        return 100000 + depth, None
+
+    if result == HUMAN:
+        return -100000 - depth, None
+
+    if depth == 0:
+        return evaluate(board), None
+
+    current_player = AI if maximizing else HUMAN
+    states = get_turn_states(board, current_player)
+
+    if not states:
+        if maximizing:
+            return -100000, None
+        return 100000, None
+
+    best_sequence = None
+
+    if maximizing:
+        best_score = -math.inf
+
+        for new_board, sequence in states:
+            score, _ = minimax(
+                new_board,
+                depth - 1,
+                alpha,
+                beta,
+                False
+            )
+
+            if score > best_score:
+                best_score = score
+                best_sequence = sequence
+
+            alpha = max(alpha, best_score)
+
+            # Alpha-Beta pruning
+            if alpha >= beta:
+                break
+
+        return best_score, best_sequence
+
+    else:
+        best_score = math.inf
+
+        for new_board, sequence in states:
+            score, _ = minimax(
+                new_board,
+                depth - 1,
+                alpha,
+                beta,
+                True
+            )
+
+            if score < best_score:
+                best_score = score
+                best_sequence = sequence
+
+            beta = min(beta, best_score)
+
+            # Alpha-Beta pruning
+            if alpha >= beta:
+                break
+
+        return best_score, best_sequence
+
+
+# ============================================================
+# 11. AI TURN
+# ============================================================
+
+def ai_turn(board):
+    print("\nAI is thinking...")
+
+    score, sequence = minimax(
+        board,
+        SEARCH_DEPTH,
+        -math.inf,
+        math.inf,
+        True
+    )
+
+    if sequence is None:
+        return board
+
+    print("AI evaluation:", score)
+
+    for move in sequence:
+        print("AI move:", move)
+        board = apply_move(board, move)
+
+    return board
+
+
+# ============================================================
+# 12. HUMAN INPUT
+# ============================================================
+
+def parse_position(text):
+    try:
+        parts = text.replace(",", " ").split()
+
+        if len(parts) != 2:
+            return None
+
+        r, c = int(parts[0]), int(parts[1])
+
+        if 0 <= r < 8 and 0 <= c < 8:
+            return (r, c)
+
+    except ValueError:
+        pass
+
+    return None
+
+
+def human_turn(board):
+    """
+    Human enters:
+        from row col
+        to row col
+
+    Example:
+        From: 5 0
+        To:   4 1
+    """
+
+    while True:
+        legal_moves = get_moves(board, HUMAN)
+
+        if not legal_moves:
+            return board
+
+        captures_exist = bool(get_capture_moves(board, HUMAN))
+
+        if captures_exist:
+            print("\nMandatory capture is available.")
+
+        print("\nYour legal moves:")
+
+        for i, move in enumerate(legal_moves, start=1):
+            print(
+                f"{i}. {move[0]} -> {move[1]}"
+            )
+
+        choice = input(
+            "\nEnter move number, or 'q' to quit: "
+        ).strip().lower()
+
+        if choice == "q":
+            print("Game ended by user.")
+            raise SystemExit
+
+        try:
+            index = int(choice) - 1
+
+            if not (0 <= index < len(legal_moves)):
+                raise ValueError
+
+            selected = legal_moves[index]
+            board = apply_move(board, selected)
+
+            # Continue mandatory multiple capture for the same piece.
+            if abs(selected[1][0] - selected[0][0]) == 2:
+                current_pos = selected[1]
+
+                while True:
+                    more_captures = []
+
+                    for move in get_capture_moves(board, HUMAN):
+                        if move[0] == current_pos:
+                            more_captures.append(move)
+
+                    if not more_captures:
+                        break
+
+                    display_board(board)
+                    print("\nYou must continue capturing.")
+
+                    for i, move in enumerate(more_captures, start=1):
+                        print(
+                            f"{i}. {move[0]} -> {move[1]}"
+                        )
+
+                    while True:
+                        try:
+                            n = int(input("Choose capture: ")) - 1
+                            if 0 <= n < len(more_captures):
+                                selected = more_captures[n]
+                                break
+                        except ValueError:
+                            pass
+
+                        print("Invalid choice. Try again.")
+
+                    board = apply_move(board, selected)
+                    current_pos = selected[1]
+
+            return board
+
+        except ValueError:
+            print("Invalid choice. Please enter a move number.")
+
+
+# ============================================================
+# 13. MAIN GAME
+# ============================================================
+
+def main():
+    board = create_board()
+
+    print("=" * 45)
+    print("          CHECKERS MINI AI")
+    print("     Adversarial Search + Alpha-Beta")
+    print("=" * 45)
+
+    print("\nYou are R (Red).")
+    print("AI is B (Blue).")
+    print("K = Human King")
+    print("Q = AI King")
+    print(f"AI search depth = {SEARCH_DEPTH}")
+
+    print("\nEnter the number of the legal move shown by the program.")
+
+    current_player = HUMAN
+
+    while True:
+        display_board(board)
+
+        result = winner(board)
+
+        if result is not None:
+            print("\n" + "=" * 45)
+
+            if result == HUMAN:
+                print("CONGRATULATIONS! YOU WIN!")
+            else:
+                print("AI WINS!")
+
+            print("=" * 45)
+            break
+
+        print("\nCurrent player:", player_name(current_player))
+
+        if current_player == HUMAN:
+            board = human_turn(board)
+            current_player = AI
+
+        else:
+            board = ai_turn(board)
+            current_player = HUMAN
+
+        print("\nCurrent evaluation score:", evaluate(board))
+
+
+if __name__ == "__main__":
+    main()
